@@ -9,8 +9,10 @@
 #include <linux/mount.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/mutex.h>
 
 #define BUFFER_SIZE 1024
+static DEFINE_MUTEX(kmod_mutex);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_VERSION("1.0");
@@ -22,19 +24,33 @@ static struct task_struct* task;
 static struct vfsmount* struct_vfsmount;
 
 static int kmod_result_open(struct seq_file *sf, void *data);
+static int kmod_release(struct inode *inode, struct file *file);
 struct task_struct * kmod_get_task_struct(void);
 struct vfsmount * kmod_get_vfsmount(void);
 void set_result(void);
 
 int kmod_open(struct inode *inode, struct file *file) {
+    if (!mutex_trylock(&kmod_mutex)) {
+        printk(KERN_INFO "can't lock file");
+        return -EBUSY;
+    }
+    printk(KERN_INFO "file is locked by module");
     return single_open(file, kmod_result_open, inode->i_private);
 }
+
+static int kmod_release(struct inode *inode, struct file *file) {
+    mutex_unlock(&kmod_mutex);
+    printk(KERN_INFO "file is unlocked by module");
+    return 0;
+}
+
 static ssize_t kmod_args_write( struct file* ptr_file, const char __user* buffer, size_t length, loff_t* ptr_offset );
 
 static struct file_operations kmod_args_ops = {
         .owner   = THIS_MODULE,
         .read    = seq_read,
         .write   = kmod_args_write,
+        .release = kmod_release,
         .open = kmod_open,
 };
 
@@ -115,6 +131,7 @@ static int __init kmod_init(void) {
 static void __exit kmod_exit(void) {
     debugfs_remove_recursive(kmod_root);
     printk(KERN_INFO "kmod: module unloaded\n");
+    mutex_destroy(&kmod_mutex);
 }
 module_init(kmod_init);
 module_exit(kmod_exit);
